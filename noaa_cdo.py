@@ -1,65 +1,55 @@
 import requests
 import csv
 import os
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # — CONFIGURATION —
-TOKEN     = "sYfiszwGwpMAOqGHxqycFdFbDkoLnlLs"  # your NOAA CDO API token
-STATION   = "GHCND:USW00094728"                # Central Park station ID
-START     = "2024-01-01"
-END       = "2024-12-31"
-LIMIT     = 1000                               # max records per request
-OUTPUT_DIR  = "data/raw"
-OUTPUT_FILE = os.path.join(OUTPUT_DIR, "noaa_gsod_2024.csv")
+TOKEN      = "sYfiszwGwpMAOqGhxqycfdFbDkoLnlLs"  # your NOAA CDO token
+STATION    = "GHCND:USW00094728"                # Central Park
+START      = "2024-01-01"
+END        = "2024-12-31"
+LIMIT      = 500                                # >366 days, so one request
+OUT_DIR    = "data/raw"
+OUT_FILE   = os.path.join(OUT_DIR, "noaa_gsod_2024.csv")
 
-# Create the output folder if it doesn't exist
-os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(OUT_DIR, exist_ok=True)
 
-# Prepare a requests session that ignores any system proxy
+# — BUILD A SESSION WITH RETRIES —
 session = requests.Session()
-session.trust_env = False  # do not use proxy settings from the environment
+session.trust_env = False
+retries = Retry(total=5, backoff_factor=1, status_forcelist=[502, 503, 504])
+session.mount("https://", HTTPAdapter(max_retries=retries))
 
-# API endpoint and headers
-API_URL = "https://www.ncei.noaa.gov/cdo-web/api/v2/data"
-headers = {
-    "Token": TOKEN
-}
-
-# Query parameters
+# — SETUP REQUEST —
+url = "https://www.ncei.noaa.gov/cdo-web/api/v2/data"
+headers = {"Token": TOKEN}
 params = {
     "datasetid":  "GSOD",
     "stationid":  STATION,
     "startdate":  START,
     "enddate":    END,
     "limit":      LIMIT,
-    "offset":     1,
+    # no offset needed since LIMIT>number of days
     "units":      "metric"
 }
 
-# Container for all records
-all_records = []
+print("🔄 Downloading 2024 GSOD data in one request…")
 
-print("Starting download via NOAA CDO API...")
+resp = session.get(url, headers=headers, params=params, timeout=60)
+resp.raise_for_status()
+results = resp.json().get("results", [])
 
-# Loop through pages until no more results
-while True:
-    response = session.get(API_URL, headers=headers, params=params, timeout=30)
-    response.raise_for_status()
-    page = response.json().get("results", [])
-    if not page:
-        break
-    all_records.extend(page)
-    print(f"  Retrieved {len(page)} records (offset={params['offset']})")
-    params["offset"] += LIMIT
-
-if not all_records:
-    print("Warning: No data returned for the specified period/station.")
+if not results:
+    print("⚠️  No data returned. Check token, dates or station.")
     exit(1)
 
-# Write to CSV
-print(f"Writing {len(all_records)} records to {OUTPUT_FILE}...")
-with open(OUTPUT_FILE, "w", newline="", encoding="utf-8") as csvfile:
-    writer = csv.DictWriter(csvfile, fieldnames=all_records[0].keys())
-    writer.writeheader()
-    writer.writerows(all_records)
+print(f"✅  Retrieved {len(results)} records. Writing CSV…")
 
-print("Download and CSV export complete!")
+# — WRITE TO CSV —
+with open(OUT_FILE, "w", newline="", encoding="utf-8") as f:
+    writer = csv.DictWriter(f, fieldnames=results[0].keys())
+    writer.writeheader()
+    writer.writerows(results)
+
+print(f"💾  Done! File saved to {OUT_FILE}")
