@@ -172,3 +172,7 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Local configuration file
+#   This file is used to store local configuration for the project, such as database
+data/raw/nypd_crime_2024_onwards.csv
